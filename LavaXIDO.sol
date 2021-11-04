@@ -32,9 +32,9 @@ contract LavaXIDO is Ownable {
         
     enum PoolStatus{ Pending, Live, Ended, ReadyForRewardClam }
     
-    mapping(address => bool) public _rewardsClaim;
-    mapping(address => uint256) public _rewards;
-    mapping(address => uint256) public _stakings;
+    mapping(address => bool) private _rewardsClaim;
+    mapping(address => uint256) private _rewards;
+    mapping(address => uint256) private _stakings;
         
     constructor(string memory name,
     address stakingTokenAddress,
@@ -72,7 +72,7 @@ contract LavaXIDO is Ownable {
             revert("rewards token rate should be grater then 0");
         }
         
-        _rewardsTokenRate = _rewardsTokenRate;
+        _rewardsTokenRate = rewardsTokenRate;
         
         _status = PoolStatus.Pending;
     }
@@ -141,7 +141,7 @@ contract LavaXIDO is Ownable {
         return _stakingTokenDestinationAddress;
     }
     
-    function addRewardsTokenSupply(uint256 rewardsTokenSupply) external onlyOwner returns(bool){
+    function addRewardsTokenSupplyAndGoLive(uint256 rewardsTokenSupply) external onlyOwner returns(bool){
         
         if (_isRewardsTokenSupplyAdded){
             revert("rewards token supply already added");
@@ -151,32 +151,27 @@ contract LavaXIDO is Ownable {
             revert("rewards token supply should be grater then 0");
         }
         
-        bool transferFromStatus = _rewardsToken.transferFrom(msg.sender, address(this), rewardsTokenSupply);
-        
-        if (transferFromStatus){
-            _isRewardsTokenSupplyAdded = true;
-            _rewardsTokenTotalSupply = rewardsTokenSupply;
-            _rewardsTokenReminingSupply = rewardsTokenSupply;
-        }
-        
-        return transferFromStatus;
-    }
-    
-    function setLived() external onlyOwner{
-        
-        if (!_isRewardsTokenSupplyAdded){
-            revert("Rewards token supply not added");
-        }
-        
         if (_status == PoolStatus.Live){
             revert("Staking already live");
         }
         
         if (_status == PoolStatus.Pending && _status != PoolStatus.Ended && _status != PoolStatus.ReadyForRewardClam && _status != PoolStatus.Live){
+            
+            bool transferFromStatus = _rewardsToken.transferFrom(msg.sender, address(this), rewardsTokenSupply);
+        
+        if (transferFromStatus){
+            _isRewardsTokenSupplyAdded = true;
+            _rewardsTokenTotalSupply = rewardsTokenSupply;
+            _rewardsTokenReminingSupply = rewardsTokenSupply;
+            }
+        
             _status = PoolStatus.Live;
+            
         } else {
             revert("Staking can not live");
         }
+        
+        return false;
     }
     
     function setEnd() external onlyOwner{
@@ -214,7 +209,8 @@ contract LavaXIDO is Ownable {
         if (_status != PoolStatus.Live && _status != PoolStatus.Pending){
             
             uint256 stakingTokenBalance = _stakingToken.balanceOf(address(this));
-            bool transferStatus = _stakingToken.transferFrom(address(this), _stakingTokenDestinationAddress, stakingTokenBalance);
+            
+            bool transferStatus = _stakingToken.transfer(_stakingTokenDestinationAddress, stakingTokenBalance);
             
             if (transferStatus){
                 _isStakingTokenSupplySendToDestinationAddress = true;
@@ -240,14 +236,16 @@ contract LavaXIDO is Ownable {
         
         uint256 checkamount = stakingBalance.add(amount);
         
-        if (_isLimitAllow && (_minLimitAllow > checkamount) || (_maxLimitAllow < checkamount)){
+        if (_isLimitAllow && ((_minLimitAllow > checkamount) || (_maxLimitAllow < checkamount))){
             revert("staking limit not meet");
         }
         
         uint256 rewards = amount.div(_rewardsTokenRate);
+        rewards = rewards.mul(1000000000000000000);
+        
         
         if (_rewardsTokenReminingSupply < rewards){
-            revert("Amount is excced the stking");
+            revert("Amount is excced the staking");
         }
         
         bool transferStatus = _stakingToken.transferFrom(msg.sender, address(this), amount);
@@ -255,9 +253,38 @@ contract LavaXIDO is Ownable {
         if (transferStatus){
             _stakings[msg.sender] = stakingBalance.add(amount);
             _rewards[msg.sender] = rewardBalance.add(rewards);
-            
+            _stakingTokenTotalRecived += amount;
             _rewardsTokenReminingSupply -= rewards;
         }
+    }
+    
+    function stakeCal(uint256 amount)  external view returns(uint256){
+        
+        if (_status != PoolStatus.Live){
+            revert("Staking is ended");
+        }
+        
+        if (amount <= 0){
+            revert("stake amount should be grater then 0");
+        }
+        
+        uint256 stakingBalance = _stakings[msg.sender];
+        
+        uint256 checkamount = stakingBalance.add(amount);
+        
+        if (_isLimitAllow && ((_minLimitAllow > checkamount) || (_maxLimitAllow < checkamount))){
+            revert("staking limit not meet");
+        }
+        
+        uint256 rewards = amount.div(_rewardsTokenRate);
+        rewards = rewards.mul(1000000000000000000);
+        
+        
+        if (_rewardsTokenReminingSupply < rewards){
+            revert("Amount is excced the staking");
+        }
+        
+        return rewards;
     }
     
     function claimRewards() external{
@@ -270,7 +297,7 @@ contract LavaXIDO is Ownable {
             }
             
             if (rewardBalance > 0){
-                bool transferStatus = _rewardsToken.transferFrom(msg.sender, address(this), rewardBalance);
+                bool transferStatus = _rewardsToken.transfer(msg.sender, rewardBalance);
                 
                 if (transferStatus){
                     _rewardsClaim[msg.sender] = true;
